@@ -9,29 +9,29 @@
 #include <iomanip>
 
 Table::Table(std::string tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes) {
-    this->tableName = std::move(tableName);
-    this->fieldNames = std::move(fieldNames);
-    this->fieldTypes = std::move(fieldTypes);
+    this->_tableName = std::move(tableName);
+    this->_fieldNames = std::move(fieldNames);
+    this->_fieldTypes = std::move(fieldTypes);
 }
 
-bool Table::insertRecord(const Record& r) {
+bool Table::insert(const Record& r) {
     std::string command = "insert";
     Comm::send(&command, 0);
     Comm::send(&command, 0);
-    this->records.push_back(r);
+    this->_records.push_back(r);
     return true;
 }
 
-const std::vector<int> &Table::getFieldTypes() {
-    return fieldTypes;
+const std::vector<int> &Table::fieldTypes() {
+    return _fieldTypes;
 }
 
-const std::vector<Record>& Table::getAllRecords() const {
-    return this->records;
+const std::vector<Record>& Table::allRecords() const {
+    return this->_records;
 }
 
-const std::vector<std::string> &Table::getFieldNames() const {
-    return fieldNames;
+const std::vector<std::string> &Table::fieldNames() const {
+    return _fieldNames;
 }
 
 

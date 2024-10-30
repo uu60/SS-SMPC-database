@@ -14,8 +14,8 @@ class Table;
 
 class Record {
 private:
-    Table *owner;
-    std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>> values;
+    Table *_owner;
+    std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>> _fieldValues;
 
 public:
     explicit Record(Table *owner);
@@ -24,9 +24,9 @@ public:
 
     void print() const;
 
-    [[nodiscard]] const std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>>& getValues() const;
+    [[nodiscard]] const std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>>& fieldValues() const;
 
-    [[nodiscard]] Table *getOwner() const;
+    [[nodiscard]] Table *owner() const;
 };
 
 

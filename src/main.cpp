@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
 
     DBMS &dbms = DBMS::getInstance();
     if (Comm::isClient()) {
-        dbms.handleFile();
+        dbms.handleFileCommands();
     } else {
         dbms.handleRequests();
     }

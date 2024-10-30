@@ -9,23 +9,23 @@
 
 class Table {
 private:
-    std::string tableName;
-    std::vector<std::string> fieldNames;
-    std::vector<int> fieldTypes;
-    std::vector<Record> records;
+    std::string _tableName;
+    std::vector<std::string> _fieldNames;
+    std::vector<int> _fieldTypes;
+    std::vector<Record> _records;
 
 public:
     Table() = default;
 
     explicit Table(std::string tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes);
 
-    bool insertRecord(const Record& r);
+    bool insert(const Record& r);
 
-    const std::vector<Record>& getAllRecords() const;
+    [[nodiscard]] const std::vector<Record>& allRecords() const;
 
-    const std::vector<std::string>& getFieldNames() const;
+    const std::vector<std::string>& fieldNames() const;
 
-    const std::vector<int>& getFieldTypes();
+    const std::vector<int>& fieldTypes();
 };
 
 

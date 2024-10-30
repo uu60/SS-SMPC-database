@@ -10,15 +10,15 @@
 
 class Database {
 private:
-    std::string databaseName;
-    std::map<std::string, Table> tables;
+    std::string _databaseName;
+    std::map<std::string, Table> _tables;
 
 public:
     explicit Database(std::string databaseName);
 
     Database();
 
-    std::string getName();
+    std::string name();
 
     bool createTable(const std::string& tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes, std::string &msg);
 

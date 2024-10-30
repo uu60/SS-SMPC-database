@@ -34,26 +34,29 @@ private:
 public:
     static DBMS &getInstance();
 
-    void handleFile();
+    void handleFileCommands();
 
     void handleConsole();
 
     void handleRequests();
 
-    bool createDatabase(const std::string &dbName);
+    bool createDatabase(const std::string &dbName, std::string& msg);
 
-    bool deleteDatabase(const std::string &dbName);
+    bool deleteDatabase(const std::string &dbName, std::string& msg);
 
-    bool useDatabase(const std::string &dbName);
+    bool useDatabase(const std::string &dbName, std::string& msg);
 
     void executeSQL(const std::string &command);
 
 private:
-    static int parseDataType(const std::string& typeName);
+    void handleFailedExecution();
 
-    static void log(const std::string& msg, bool success);
+    void doCreateTable(std::istringstream &iss);
 
-    void createTableByCommand(std::istringstream& iss);
+    static int parseDataType(const std::string &typeName);
+
+    static void log(const std::string &msg, bool success);
+
 };
 
 #endif //SMPC_DATABASE_DBMS_H

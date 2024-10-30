@@ -24,36 +24,33 @@ DBMS &DBMS::getInstance() {
     return instance;
 }
 
-bool DBMS::createDatabase(const std::string &dbName) {
+bool DBMS::createDatabase(const std::string &dbName, std::string& msg) {
     if (databases.find(dbName) != databases.end()) {
-        log("Database " + dbName + " already exists.", false);
+        msg = "Database " + dbName + " already exists.";
         return false;
     }
     databases[dbName] = Database(dbName);
-    log("Database " + dbName + " created.", true);
     return true;
 }
 
-bool DBMS::deleteDatabase(const std::string &dbName) {
-    if (currentDatabase && currentDatabase->getName() == dbName) {
+bool DBMS::deleteDatabase(const std::string &dbName, std::string& msg) {
+    if (currentDatabase && currentDatabase->name() == dbName) {
         currentDatabase = nullptr;
     }
     if (databases.erase(dbName) > 0) {
-        log("Database " + dbName + " deleted.", true);
         return true;
     }
-    log("Database " + dbName + " does not exist.", false);
+    msg = "Database " + dbName + " does not exist.";
     return false;
 }
 
-bool DBMS::useDatabase(const std::string &dbName) {
+bool DBMS::useDatabase(const std::string &dbName, std::string& msg) {
     auto it = databases.find(dbName);
     if (it != databases.end()) {
         currentDatabase = &(it->second);
-        log("Switched to database " + dbName + ".", true);
         return true;
     }
-    log("Database " + dbName + " does not exist.", false);
+    msg = "Database " + dbName + " does not exist.";
     return false;
 }
 
@@ -62,38 +59,46 @@ void DBMS::executeSQL(const std::string &command) {
     std::string word;
     iss >> word;
     int done;
+    std::string msg;
 
     if (word == "create") {
         iss >> word;
         if (word == "database") {
             std::string dbName;
             iss >> dbName;
-            createDatabase(dbName);
+            if (!createDatabase(dbName, msg)) {
+                log(msg, false);
+                
+            }
+            log("Database " + dbName + " created.", true);
             std::string exec = CDB_PRE + dbName;
             Comm::send(&exec, 0);
             Comm::send(&exec, 1);
 
+            // sync
             Comm::recv(&done, 0);
             Comm::recv(&done, 1);
         } else if (word == "table") {
             if (!currentDatabase) {
                 log("Select a database first.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             std::string exec = CTB_PRE + command.substr(std::string("create table").length());
             Comm::send(&exec, 0);
             Comm::send(&exec, 1);
             if (!currentDatabase) {
                 log("Select a database first.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
 
-            createTableByCommand(iss);
+            doCreateTable(iss);
+
+            // sync
             Comm::recv(&done, 0);
             Comm::recv(&done, 1);
         } else {
             log("Invalid CREATE syntax.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
     } else if (word == "drop") {
@@ -101,21 +106,25 @@ void DBMS::executeSQL(const std::string &command) {
         if (word == "database") {
             std::string dbName;
             iss >> dbName;
-            deleteDatabase(dbName);
+            if (!deleteDatabase(dbName, msg)) {
+                log(msg, false);
+                handleFailedExecution();
+            }
+            log("Database " + dbName + " deleted.", true);
             std::string exec = DDB_PRE + dbName;
             Comm::send(&exec, 0);
             Comm::send(&exec, 1);
 
+            // sync
             Comm::recv(&done, 0);
             Comm::recv(&done, 1);
         } else if (word == "table") {
             if (!currentDatabase) {
                 log("Select a database first.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             std::string tableName;
             iss >> tableName;
-            std::string msg;
             if (currentDatabase->deleteTable(tableName, msg)) {
                 log("Table " + tableName + " deleted.", true);
             } else {
@@ -125,27 +134,33 @@ void DBMS::executeSQL(const std::string &command) {
             Comm::send(&exec, 0);
             Comm::send(&exec, 1);
 
+            // sync
             Comm::recv(&done, 0);
             Comm::recv(&done, 1);
         } else {
             log("Invalid DROP syntax.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
     } else if (word == "use") {
         std::string dbName;
         iss >> dbName;
         std::string exec = USE_PRE + dbName;
-        useDatabase(dbName);
+        if (!useDatabase(dbName, msg)) {
+            log(msg, false);
+            handleFailedExecution();
+        }
+        log("Switched to database " + dbName + ".", true);
         Comm::send(&exec, 0);
         Comm::send(&exec, 1);
 
+        // sync
         Comm::recv(&done, 0);
         Comm::recv(&done, 1);
     } else if (word == "select") {
         if (!currentDatabase) {
             log("Select a database first.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
         iss >> word;
         iss >> word;
@@ -165,8 +180,8 @@ void DBMS::executeSQL(const std::string &command) {
 
             for (int i = 0; i < count; i++) {
                 Record temp(table);
-                for (int j = 0; j < table->getFieldTypes().size(); j++) {
-                    int type = table->getFieldTypes()[j];
+                for (int j = 0; j < table->fieldTypes().size(); j++) {
+                    int type = table->fieldTypes()[j];
                     if (type == 1) {
                         temp.addField(BitSecret(false).reconstruct(), type);
                     } else if (type == 8) {
@@ -181,7 +196,7 @@ void DBMS::executeSQL(const std::string &command) {
                 }
                 rawRecords.push_back(temp);
             }
-            for (const auto &field: table->getFieldNames()) {
+            for (const auto &field: table->fieldNames()) {
                 std::cout << std::setw(10) << field << " ";
             }
             std::cout << std::endl;
@@ -193,18 +208,18 @@ void DBMS::executeSQL(const std::string &command) {
             Comm::recv(&done, 1);
         } else {
             log("Table " + tableName + " does not exist.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
     } else if (word == "insert") {
         if (!currentDatabase) {
             log("Select a database first.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
         iss >> word;
         if (word != "into") {
             log("Syntax error. Maybe you should use `insert into`.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
         std::string tableName;
         iss >> tableName;
@@ -215,13 +230,13 @@ void DBMS::executeSQL(const std::string &command) {
         Table *table = currentDatabase->getTable(tableName);
         if (!table) {
             log("Table " + tableName + " does not exist.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
         iss >> word;
         if (word != "values") {
             log("Syntax error. Maybe you should use `insert into <table_name> values`.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
         std::string valuesStr;
@@ -234,16 +249,16 @@ void DBMS::executeSQL(const std::string &command) {
 
         int vi = 0;
         while (std::getline(valuesStream, value, ',')) {
-            if (vi >= table->getFieldTypes().size()) {
+            if (vi >= table->fieldTypes().size()) {
                 log("Unmatched parameter numbers.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             value.erase(value.find_last_not_of(" \n\r\t") + 1);
             value.erase(0, value.find_first_not_of(" \n\r\t"));
 
             try {
                 int64_t valueInt = std::stoll(value);
-                int type = table->getFieldTypes()[vi];
+                int type = table->fieldTypes()[vi];
                 int64_t masked = valueInt & ((1l << type) - 1);
                 if (type < 64 && masked != valueInt) {
                     throw std::out_of_range("");
@@ -251,20 +266,20 @@ void DBMS::executeSQL(const std::string &command) {
                 values.emplace_back(valueInt);
             } catch (const std::out_of_range &) {
                 log("Inserted parameters out of range.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             } catch (const std::invalid_argument &) {
                 log("Invalid parameters.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             vi++;
         }
-        if (vi != table->getFieldTypes().size()) {
+        if (vi != table->fieldTypes().size()) {
             log("Unmatched parameter numbers.", false);
-            throw std::runtime_error("");
+            handleFailedExecution();
         }
 
-        for (int i = 0; i < table->getFieldTypes().size(); i++) {
-            int type = table->getFieldTypes()[i];
+        for (int i = 0; i < table->fieldTypes().size(); i++) {
+            int type = table->fieldTypes()[i];
             auto v = values[i];
             if (type == 1) {
                 BitSecret(v).share();
@@ -294,7 +309,7 @@ void DBMS::handleConsole() {
 
     while (true) {
         if (currentDatabase) {
-            std::cout << "smpc-db(" + currentDatabase->getName() + ")> ";
+            std::cout << "smpc-db(" + currentDatabase->name() + ")> ";
         } else {
             std::cout << "smpc-db> ";
         }
@@ -340,38 +355,39 @@ void DBMS::handleRequests() {
     while (true) {
         std::string command;
         Comm::recv(&command, Comm::CLIENT_RANK);
+        std::string msg;
 
         if (command == "exit") {
             break;
         } else if (command.starts_with(CDB_PRE)) { // create database
             std::string dbName = command.substr(CDB_PRE.length());
-            if (!createDatabase(dbName)) {
-                throw std::runtime_error("");
+            if (!createDatabase(dbName, msg)) {
+                handleFailedExecution();
             }
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(DDB_PRE)) {
             std::string dbName = command.substr(DDB_PRE.length());
-            if (!deleteDatabase(dbName)) {
-                throw std::runtime_error("");
+            if (!deleteDatabase(dbName, msg)) {
+                handleFailedExecution();
             }
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(USE_PRE)) {
             std::string dbName = command.substr(USE_PRE.length());
-            if (!useDatabase(dbName)) {
-                throw std::runtime_error("");
+            if (!useDatabase(dbName, msg)) {
+                handleFailedExecution();
             }
+            log("Switched to database " + dbName + ".", true);
 
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(CTB_PRE)) {
             std::istringstream iss(command.substr(CTB_PRE.length()));
-            createTableByCommand(iss);
+            doCreateTable(iss);
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(DTB_PRE)) {
             std::string tableName = command.substr(DTB_PRE.length());
-            std::string msg;
             if (!currentDatabase->deleteTable(tableName, msg)) {
                 log(msg, false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(INS_PRE)) {
@@ -379,10 +395,10 @@ void DBMS::handleRequests() {
             Table *table = currentDatabase->getTable(tableName);
             if (!table) {
                 log("Table does not exist.", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
 
-            std::vector<int> types = table->getFieldTypes();
+            std::vector<int> types = table->fieldTypes();
             Record r(table);
             for (int i = 0; i < types.size(); i++) {
                 int type = types[i];
@@ -403,18 +419,18 @@ void DBMS::handleRequests() {
                     r.addField(s, type);
                 }
             }
-            if (table->insertRecord(r)) {
+            if (table->insert(r)) {
                 log("Record inserted into " + tableName + ".", true);
             } else {
                 log("Failed to insert record into " + tableName + ".", false);
-                throw std::runtime_error("");
+                handleFailedExecution();
             }
             Comm::send(&done, Comm::CLIENT_RANK);
         } else if (command.starts_with(SEL_PRE)) {
             std::string tableName = command.substr(INS_PRE.length());
 
             Table *table = currentDatabase->getTable(tableName);
-            std::vector<Record> records = table->getAllRecords();
+            std::vector<Record> records = table->allRecords();
             auto count = (int64_t) (records.size());
             if (Comm::rank() == 0) {
                 Comm::send(&count, Comm::CLIENT_RANK);
@@ -423,18 +439,18 @@ void DBMS::handleRequests() {
             for (int i = 0; i < count; i++) {
                 const Record &cur = records[i];
 
-                for (int j = 0; j < table->getFieldTypes().size(); j++) {
-                    int type = table->getFieldTypes()[j];
+                for (int j = 0; j < table->fieldTypes().size(); j++) {
+                    int type = table->fieldTypes()[j];
                     if (type == 1) {
-                        std::get<BitSecret>(cur.getValues()[j]).reconstruct();
+                        std::get<BitSecret>(cur.fieldValues()[j]).reconstruct();
                     } else if (type == 8) {
-                        std::get<IntSecret<int8_t>>(cur.getValues()[j]).reconstruct();
+                        std::get<IntSecret<int8_t>>(cur.fieldValues()[j]).reconstruct();
                     } else if (type == 16) {
-                        std::get<IntSecret<int16_t>>(cur.getValues()[j]).reconstruct();
+                        std::get<IntSecret<int16_t>>(cur.fieldValues()[j]).reconstruct();
                     } else if (type == 32) {
-                        std::get<IntSecret<int32_t>>(cur.getValues()[j]).reconstruct();
+                        std::get<IntSecret<int32_t>>(cur.fieldValues()[j]).reconstruct();
                     } else {
-                        std::get<IntSecret<int64_t>>(cur.getValues()[j]).reconstruct();
+                        std::get<IntSecret<int64_t>>(cur.fieldValues()[j]).reconstruct();
                     }
                 }
             }
@@ -443,7 +459,7 @@ void DBMS::handleRequests() {
     }
 }
 
-void DBMS::handleFile() {
+void DBMS::handleFileCommands() {
     std::string command;
 
     std::cout << "Welcome to SMPC-DBMS. Type 'exit' to quit." << std::endl;
@@ -456,7 +472,7 @@ void DBMS::handleFile() {
 
     while (std::getline(file, command)) {
         if (currentDatabase) {
-            std::cout << "smpc-db(" + currentDatabase->getName() + ")> ";
+            std::cout << "smpc-db(" + currentDatabase->name() + ")> ";
         } else {
             std::cout << "smpc-db> ";
         }
@@ -472,7 +488,7 @@ void DBMS::handleFile() {
     std::cout << "Goodbye!" << std::endl;
 }
 
-void DBMS::createTableByCommand(std::istringstream &iss) {
+void DBMS::doCreateTable(std::istringstream &iss) {
     std::string tableName;
     iss >> tableName;
 
@@ -508,8 +524,12 @@ void DBMS::createTableByCommand(std::istringstream &iss) {
     bool created = currentDatabase->createTable(tableName, fieldNames, fieldTypes, msg);
     if (!created) {
         log(msg, false);
-        throw std::runtime_error("");
+        handleFailedExecution();
     } else {
         log("Table " + tableName + " created.", true);
     }
+}
+
+void DBMS::handleFailedExecution() {
+    handleFailedExecution();
 }

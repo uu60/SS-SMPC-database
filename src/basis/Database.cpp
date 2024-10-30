@@ -7,11 +7,11 @@
 #include "basis/Database.h"
 
 Database::Database(std::string databaseName) {
-    this->databaseName = std::move(databaseName);
+    this->_databaseName = std::move(databaseName);
 }
 
-std::string Database::getName() {
-    return this->databaseName;
+std::string Database::name() {
+    return this->_databaseName;
 }
 
 bool
@@ -21,7 +21,7 @@ Database::createTable(const std::string &tableName, std::vector<std::string> fie
         msg = "Table existed.";
         return false;
     }
-    tables[tableName] = Table(tableName, std::move(fieldNames), std::move(fieldTypes));
+    _tables[tableName] = Table(tableName, std::move(fieldNames), std::move(fieldTypes));
     return true;
 }
 
@@ -34,10 +34,10 @@ bool Database::deleteTable(const std::string &tableName, std::string &msg) {
 }
 
 Table *Database::getTable(const std::string &tableName) {
-    if (tables.find(tableName) == tables.end()) {
+    if (_tables.find(tableName) == _tables.end()) {
         return nullptr;
     }
-    return &tables[tableName];
+    return &_tables[tableName];
 }
 
 Database::Database() = default;
