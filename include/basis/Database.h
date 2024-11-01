@@ -22,7 +22,7 @@ public:
 
     bool createTable(const std::string& tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes, std::string &msg);
 
-    bool deleteTable(const std::string& tableName, std::string &msg);
+    bool dropTable(const std::string& tableName, std::string &msg);
 
     Table* getTable(const std::string& tableName);
 };

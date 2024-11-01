@@ -9,12 +9,13 @@
 #include <limits>
 #include <iomanip>
 #include <mpc_package/utils/Log.h>
+#include <SQLParser.h>
+#include <sql/SQLStatement.h>
+#include <nlohmann/json.hpp>
+#include "socket/LocalServer.h"
 
-const std::string DBMS::CDB_PRE = "$cdb$";
-const std::string DBMS::DDB_PRE = "$ddb$";
-const std::string DBMS::USE_PRE = "$use$";
-const std::string DBMS::CTB_PRE = "$ctb$";
-const std::string DBMS::DTB_PRE = "$dtb$";
+using json = nlohmann::json;
+
 const std::string DBMS::INS_PRE = "$ins$";
 const std::string DBMS::SEL_PRE = "$sel$";
 
@@ -24,512 +25,532 @@ DBMS &DBMS::getInstance() {
     return instance;
 }
 
-bool DBMS::createDatabase(const std::string &dbName, std::string& msg) {
-    if (databases.find(dbName) != databases.end()) {
+bool DBMS::createDatabase(const std::string &dbName, std::string &msg) {
+    if (_databases.find(dbName) != _databases.end()) {
         msg = "Database " + dbName + " already exists.";
         return false;
     }
-    databases[dbName] = Database(dbName);
+    _databases[dbName] = Database(dbName);
     return true;
 }
 
-bool DBMS::deleteDatabase(const std::string &dbName, std::string& msg) {
-    if (currentDatabase && currentDatabase->name() == dbName) {
-        currentDatabase = nullptr;
+bool DBMS::dropDatabase(const std::string &dbName, std::string &msg) {
+    if (_currentDatabase && _currentDatabase->name() == dbName) {
+        _currentDatabase = nullptr;
     }
-    if (databases.erase(dbName) > 0) {
+    if (_databases.erase(dbName) > 0) {
         return true;
     }
     msg = "Database " + dbName + " does not exist.";
     return false;
 }
 
-bool DBMS::useDatabase(const std::string &dbName, std::string& msg) {
-    auto it = databases.find(dbName);
-    if (it != databases.end()) {
-        currentDatabase = &(it->second);
+bool DBMS::useDatabase(const std::string &dbName, std::string &msg) {
+    auto it = _databases.find(dbName);
+    if (it != _databases.end()) {
+        _currentDatabase = &(it->second);
         return true;
     }
     msg = "Database " + dbName + " does not exist.";
     return false;
 }
 
-void DBMS::executeSQL(const std::string &command) {
+std::string handleEndingDatabaseName(std::istringstream &iss) {
+    std::string dbName;
+    iss >> dbName;
+    // missing db name
+    if (dbName.empty()) {
+        DBMS::log("Syntax error: Missing database name.", false);
+        return "";
+    }
+
+    // remove extra chars
+    std::string remaining;
+    std::getline(iss, remaining);
+    remaining.erase(std::remove_if(remaining.begin(), remaining.end(), ::isspace), remaining.end());
+
+    // handle `;`
+    if (!remaining.empty() && remaining != ";") {
+        DBMS::log("Syntax error: Invalid characters after database name.", false);
+        return "";
+    }
+    if (dbName.back() == ';') {
+        dbName.pop_back();
+    }
+
+    return dbName;
+}
+
+void DBMS::notifyServersSync(json &j) {
+    int done;
+    std::string m = j.dump();
+    Comm::send(&m, 0);
+    Comm::send(&m, 1);
+
+    // sync
+    Comm::recv(&done, 0);
+    Comm::recv(&done, 1);
+}
+
+void DBMS::execute(const std::string &command) {
     std::istringstream iss(command);
     std::string word;
     iss >> word;
-    int done;
-    std::string msg;
-
-    if (word == "create") {
+    // handle `create db` and `use db`
+    bool create = strcasecmp(word.c_str(), "create") == 0;
+    bool drop = strcasecmp(word.c_str(), "drop") == 0;
+    if (create || drop) {
         iss >> word;
-        if (word == "database") {
-            std::string dbName;
-            iss >> dbName;
-            if (!createDatabase(dbName, msg)) {
-                log(msg, false);
-                
-            }
-            log("Database " + dbName + " created.", true);
-            std::string exec = CDB_PRE + dbName;
-            Comm::send(&exec, 0);
-            Comm::send(&exec, 1);
+        if (strcasecmp(word.c_str(), "database") == 0) {
+            std::string dbName = handleEndingDatabaseName(iss);
 
-            // sync
-            Comm::recv(&done, 0);
-            Comm::recv(&done, 1);
-        } else if (word == "table") {
-            if (!currentDatabase) {
-                log("Select a database first.", false);
-                handleFailedExecution();
-            }
-            std::string exec = CTB_PRE + command.substr(std::string("create table").length());
-            Comm::send(&exec, 0);
-            Comm::send(&exec, 1);
-            if (!currentDatabase) {
-                log("Select a database first.", false);
-                handleFailedExecution();
-            }
+            if (create) {
+                // execute
+                if (!createDatabase(dbName, msg)) {
+                    log(msg, false);
+                    handleFailedExecution();
+                    return;
+                }
+                // notify servers
+                json j;
+                j["type"] = "cdb";
+                j["name"] = dbName;
+                notifyServersSync(j);
 
-            doCreateTable(iss);
-
-            // sync
-            Comm::recv(&done, 0);
-            Comm::recv(&done, 1);
-        } else {
-            log("Invalid CREATE syntax.", false);
-            handleFailedExecution();
-        }
-
-    } else if (word == "drop") {
-        iss >> word;
-        if (word == "database") {
-            std::string dbName;
-            iss >> dbName;
-            if (!deleteDatabase(dbName, msg)) {
-                log(msg, false);
-                handleFailedExecution();
-            }
-            log("Database " + dbName + " deleted.", true);
-            std::string exec = DDB_PRE + dbName;
-            Comm::send(&exec, 0);
-            Comm::send(&exec, 1);
-
-            // sync
-            Comm::recv(&done, 0);
-            Comm::recv(&done, 1);
-        } else if (word == "table") {
-            if (!currentDatabase) {
-                log("Select a database first.", false);
-                handleFailedExecution();
-            }
-            std::string tableName;
-            iss >> tableName;
-            if (currentDatabase->deleteTable(tableName, msg)) {
-                log("Table " + tableName + " deleted.", true);
+                log("Database `" + dbName + "` created.", true);
             } else {
-                std::cout << msg << std::endl;
+                if (!dropDatabase(dbName, msg)) {
+                    log(msg, false);
+                    handleFailedExecution();
+                }
+
+                // notify servers
+                json j;
+                j["type"] = "ddb";
+                j["name"] = dbName;
+                notifyServersSync(j);
+
+                log("Database " + dbName + " dropped.", true);
             }
-            std::string exec = DTB_PRE + tableName;
-            Comm::send(&exec, 0);
-            Comm::send(&exec, 1);
-
-            // sync
-            Comm::recv(&done, 0);
-            Comm::recv(&done, 1);
-        } else {
-            log("Invalid DROP syntax.", false);
-            handleFailedExecution();
+            return;
         }
+    }
 
-    } else if (word == "use") {
-        std::string dbName;
-        iss >> dbName;
-        std::string exec = USE_PRE + dbName;
+    if (strcasecmp(word.c_str(), "use") == 0) {
+        std::string dbName = handleEndingDatabaseName(iss);
         if (!useDatabase(dbName, msg)) {
             log(msg, false);
             handleFailedExecution();
         }
-        log("Switched to database " + dbName + ".", true);
-        Comm::send(&exec, 0);
-        Comm::send(&exec, 1);
+        // notify servers
+        json j;
+        j["type"] = "udb";
+        j["name"] = dbName;
+        notifyServersSync(j);
 
-        // sync
-        Comm::recv(&done, 0);
-        Comm::recv(&done, 1);
-    } else if (word == "select") {
-        if (!currentDatabase) {
-            log("Select a database first.", false);
-            handleFailedExecution();
-        }
-        iss >> word;
-        iss >> word;
-        std::string tableName;
-        iss >> tableName;
+        log("Database `" + dbName + "` selected.", true);
+        return;
+    }
 
-        Table *table = currentDatabase->getTable(tableName);
+    if (!_currentDatabase) {
+        log("No database selected.", false);
+        handleFailedExecution();
+        return;
+    }
 
-        std::string exec = SEL_PRE + tableName;
-        Comm::send(&exec, 0);
-        Comm::send(&exec, 1);
-        std::vector<Record> rawRecords;
-        if (table) {
-            int64_t c;
-            Comm::recv(&c, 0);
-            auto count = (uint64_t) c;
+    hsql::SQLParserResult result;
+    hsql::SQLParser::parse(command, &result);
 
-            for (int i = 0; i < count; i++) {
-                Record temp(table);
-                for (int j = 0; j < table->fieldTypes().size(); j++) {
-                    int type = table->fieldTypes()[j];
-                    if (type == 1) {
-                        temp.addField(BitSecret(false).reconstruct(), type);
-                    } else if (type == 8) {
-                        temp.addField(IntSecret<int8_t>(0).reconstruct(), type);
-                    } else if (type == 16) {
-                        temp.addField(IntSecret<int16_t>(0).reconstruct(), type);
-                    } else if (type == 32) {
-                        temp.addField(IntSecret<int32_t>(0).reconstruct(), type);
-                    } else {
-                        temp.addField(IntSecret<int64_t>(0).reconstruct(), type);
+    if (!result.isValid()) {
+        DBMS::log(result.errorMsg(), false);
+        handleFailedExecution();
+        return;
+    }
+
+    std::ostringstream resp;
+    for (int si = 0; si < result.getStatements().size(); si++) {
+        auto stmt = result.getStatement(si);
+        switch (stmt->type()) {
+            case hsql::kStmtCreate: {
+                const auto *createStmt = dynamic_cast<const hsql::CreateStatement *>(stmt);
+                if (createStmt->type != hsql::kCreateTable) {
+                    resp << "Unsupported CREATE statement type." << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+
+                std::string tableName = createStmt->tableName;
+
+                if (_currentDatabase->getTable(tableName)) {
+                    resp << "Failed. Table `" + tableName + "` already exists." << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+
+                std::vector<std::string> fieldNames;
+                std::vector<int> fieldTypes;
+
+                for (const auto *column: *createStmt->columns) {
+                    std::string fieldName = column->name;
+
+                    int64_t type;
+                    switch (column->type.data_type) {
+                        case hsql::DataType::BOOLEAN:
+                            type = 1;
+                            break;
+                        case hsql::DataType::SMALLINT:
+                            type = 16;
+                            break;
+                        case hsql::DataType::INT:
+                            type = 32;
+                            break;
+                        case hsql::DataType::LONG:
+                            type = 64;
+                            break;
+                        default:
+                            resp << "Failed. Unsupported data type for field `" + fieldName + "`." << std::endl;
+                            handleFailedExecution();
+                            goto over;
+                    }
+
+                    fieldNames.push_back(fieldName);
+                    fieldTypes.push_back((int32_t) type);
+                }
+
+                if (!_currentDatabase->createTable(tableName, fieldNames, fieldTypes, msg)) {
+                    resp << "Failed. " << msg << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+                // notify servers
+                json j;
+                j["type"] = "ctb";
+                j["name"] = tableName;
+                j["fieldNames"] = fieldNames;
+                j["fieldTypes"] = fieldTypes;
+                notifyServersSync(j);
+
+                resp << "OK. Table `" + tableName + "` created.";
+                break;
+            }
+            case hsql::kStmtDrop: {
+                const auto *dropStmt = dynamic_cast<const hsql::DropStatement *>(stmt);
+
+                if (dropStmt->type == hsql::kDropTable) {
+                    std::string tableName = dropStmt->name;
+                    std::cout << "Dropping table: " << tableName << std::endl;
+
+                    if (!_currentDatabase->dropTable(tableName, msg)) {
+                        resp << "Failed " << msg << std::endl;
+                        goto over;
+                    }
+
+                    // notify servers
+                    json j;
+                    j["type"] = "dtb";
+                    j["name"] = tableName;
+                    notifyServersSync(j);
+
+                    resp << "OK. Table " + tableName + " dropped successfully." << std::endl;
+                    break;
+                } else {
+                    resp << "Failed. Unsupported DROP statement type." << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+            }
+            case hsql::kStmtInsert: {
+                const auto *insertStmt = dynamic_cast<const hsql::InsertStatement *>(stmt);
+
+                std::string tableName = insertStmt->tableName;
+                Table *table = _currentDatabase->getTable(tableName);
+                if (!table) {
+                    resp << "Failed. Table `" + tableName + "` does not exist." << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+                const auto fieldNames = table->fieldNames();
+
+                // get inserted values
+                const auto columns = insertStmt->columns;
+                const auto values = insertStmt->values;
+                std::vector<std::string> cols;
+
+                // insert values all columns
+                if (!insertStmt->columns) {
+                    cols = table->fieldNames();
+                } else {
+                    for (auto c: *columns) {
+                        cols.emplace_back(c);
                     }
                 }
-                rawRecords.push_back(temp);
-            }
-            for (const auto &field: table->fieldNames()) {
-                std::cout << std::setw(10) << field << " ";
-            }
-            std::cout << std::endl;
-            for (const auto &record: rawRecords) {
-                record.print();
-            }
 
-            Comm::recv(&done, 0);
-            Comm::recv(&done, 1);
-        } else {
-            log("Table " + tableName + " does not exist.", false);
-            handleFailedExecution();
-        }
-
-    } else if (word == "insert") {
-        if (!currentDatabase) {
-            log("Select a database first.", false);
-            handleFailedExecution();
-        }
-        iss >> word;
-        if (word != "into") {
-            log("Syntax error. Maybe you should use `insert into`.", false);
-            handleFailedExecution();
-        }
-        std::string tableName;
-        iss >> tableName;
-        std::string exec = INS_PRE + tableName;
-        Comm::send(&exec, 0);
-        Comm::send(&exec, 1);
-
-        Table *table = currentDatabase->getTable(tableName);
-        if (!table) {
-            log("Table " + tableName + " does not exist.", false);
-            handleFailedExecution();
-        }
-
-        iss >> word;
-        if (word != "values") {
-            log("Syntax error. Maybe you should use `insert into <table_name> values`.", false);
-            handleFailedExecution();
-        }
-
-        std::string valuesStr;
-        std::getline(iss, valuesStr, ')');
-        valuesStr.erase(0, valuesStr.find('(') + 1);
-
-        std::istringstream valuesStream(valuesStr);
-        std::vector<int64_t> values;
-        std::string value;
-
-        int vi = 0;
-        while (std::getline(valuesStream, value, ',')) {
-            if (vi >= table->fieldTypes().size()) {
-                log("Unmatched parameter numbers.", false);
-                handleFailedExecution();
-            }
-            value.erase(value.find_last_not_of(" \n\r\t") + 1);
-            value.erase(0, value.find_first_not_of(" \n\r\t"));
-
-            try {
-                int64_t valueInt = std::stoll(value);
-                int type = table->fieldTypes()[vi];
-                int64_t masked = valueInt & ((1l << type) - 1);
-                if (type < 64 && masked != valueInt) {
-                    throw std::out_of_range("");
+                if (cols.size() != values->size()) {
+                    resp << "Failed. Unmatched parameter numbers." << std::endl;
+                    handleFailedExecution();
+                    goto over;;
                 }
-                values.emplace_back(valueInt);
-            } catch (const std::out_of_range &) {
-                log("Inserted parameters out of range.", false);
-                handleFailedExecution();
-            } catch (const std::invalid_argument &) {
-                log("Invalid parameters.", false);
-                handleFailedExecution();
+                for (auto &column: cols) {
+                    if (std::find(fieldNames.begin(), fieldNames.end(), column) == fieldNames.end()) {
+                        resp << "Failed. Unknown field name `" + column + "`." << std::endl;
+                        handleFailedExecution();
+                        goto over;
+                    }
+                }
+
+                std::vector<int64_t> parsedValues;
+                for (size_t i = 0; i < values->size(); ++i) {
+                    const auto expr = (*values)[i];
+                    int64_t v;
+
+                    if (expr->type == hsql::kExprLiteralInt) {
+                        v = expr->ival;
+                    } else {
+                        resp << "Failed. Unsupported value type." << std::endl;
+                        handleFailedExecution();
+                        goto over;
+                    }
+
+                    // column idx in the table
+                    int64_t idx = std::distance(fieldNames.begin(),
+                                                std::find(fieldNames.begin(), fieldNames.end(), cols[i]));
+                    int type = table->fieldTypes()[idx];
+                    int64_t masked = v & ((1LL << type) - 1);
+                    if (type < 64 && masked != v) {
+                        resp << "Failed. Inserted parameters out of range." << std::endl;
+                        handleFailedExecution();
+                        goto over;
+                    }
+                    parsedValues.emplace_back(v);
+                }
+
+                json j;
+                j["type"] = "ins";
+                j["name"] = tableName;
+                std::string m = j.dump();
+
+                Comm::send(&m, 0);
+                Comm::send(&m, 1);
+
+                // secret share
+                for (size_t i = 0; i < table->fieldTypes().size(); ++i) {
+                    int type = table->fieldTypes()[i];
+                    // table field idx in the inserted columns
+                    const auto &find = std::find(cols.begin(), cols.end(), fieldNames[i]);
+                    int64_t idx = std::distance(cols.begin(), find);
+
+                    int64_t v = find != cols.end() ? parsedValues[idx] : 0;
+                    if (type == 1) {
+                        BitSecret(v).share();
+                    } else if (type == 8) {
+                        IntSecret<int8_t>(static_cast<int8_t>(v)).share();
+                    } else if (type == 16) {
+                        IntSecret<int16_t>(static_cast<int16_t>(v)).share();
+                    } else if (type == 32) {
+                        IntSecret<int32_t>(static_cast<int32_t>(v)).share();
+                    } else {
+                        IntSecret<int64_t>(v).share();
+                    }
+                }
+
+                Comm::recv(&done, 0);
+                Comm::recv(&done, 1);
+                resp << "OK. Record inserted into " + tableName + "." << std::endl;
+
+                break;
             }
-            vi++;
-        }
-        if (vi != table->fieldTypes().size()) {
-            log("Unmatched parameter numbers.", false);
-            handleFailedExecution();
-        }
+            case hsql::kStmtSelect: {
+                const auto *selectStmt = dynamic_cast<const hsql::SelectStatement *>(stmt);
 
-        for (int i = 0; i < table->fieldTypes().size(); i++) {
-            int type = table->fieldTypes()[i];
-            auto v = values[i];
-            if (type == 1) {
-                BitSecret(v).share();
-            } else if (type == 8) {
-                IntSecret<int8_t>((int8_t) v).share();
-            } else if (type == 16) {
-                IntSecret<int16_t>((int16_t) v).share();
-            } else if (type == 32) {
-                IntSecret<int32_t>((int32_t) v).share();
-            } else {
-                IntSecret<int64_t>(v).share();
+                std::string tableName = selectStmt->fromTable->getName();
+
+                Table *table = _currentDatabase->getTable(tableName);
+                if (!table) {
+                    resp << "Failed. Table `" + tableName + "` does not exist." << std::endl;
+                    handleFailedExecution();
+                    goto over;
+                }
+                const auto fieldNames = table->fieldNames();
+
+                // select content
+                std::vector<std::string> selectedFields;
+                const auto list = selectStmt->selectList;
+                for (const auto c: *list) {
+                    // select *
+                    if (c->type == hsql::kExprStar) {
+                        selectedFields = table->fieldNames();
+                        break;
+                    }
+                    if (c->type == hsql::kExprColumnRef) {
+                        selectedFields.emplace_back(c->getName());
+                    }
+                }
+
+                // order
+                if (!selectStmt->order) {
+                    const auto* order = selectStmt->order;
+
+                }
+
+                // notify servers
+                json j;
+                j["type"] = "sel";
+                j["name"] = tableName;
+                j["fieldNames"] = selectedFields;
+                std::string m = j.dump();
+                Comm::send(&m, 0);
+                Comm::send(&m, 1);
+
+                std::vector<Record> rawRecords;
+                int64_t c;
+                Comm::recv(&c, 0);
+                auto count = static_cast<uint64_t>(c);
+
+                for (int i = 0; i < count; i++) {
+                    Record temp;
+                    for (const auto & selectedField : selectedFields) {
+                        // column idx in the table
+                        int64_t idx = std::distance(fieldNames.begin(),
+                                                    std::find(fieldNames.begin(), fieldNames.end(), selectedField));
+                        int type = table->fieldTypes()[idx];
+                        if (type == 1) {
+                            temp.addField(BitSecret(false).reconstruct(), type);
+                        } else if (type == 8) {
+                            temp.addField(IntSecret<int8_t>(0).reconstruct(), type);
+                        } else if (type == 16) {
+                            temp.addField(IntSecret<int16_t>(0).reconstruct(), type);
+                        } else if (type == 32) {
+                            temp.addField(IntSecret<int32_t>(0).reconstruct(), type);
+                        } else {
+                            temp.addField(IntSecret<int64_t>(0).reconstruct(), type);
+                        }
+                    }
+                    rawRecords.push_back(temp);
+                }
+
+                for (const auto &field: table->fieldNames()) {
+                    resp << std::setw(10) << field;
+                }
+                resp << std::endl;
+
+                for (const auto &record: rawRecords) {
+                    record.print(resp);
+                }
+
+                Comm::recv(&done, 0);
+                Comm::recv(&done, 1);
+                break;
+            }
+            default: {
+                resp << "Syntax error." << std::endl;
+                handleFailedExecution();
+                goto over;
             }
         }
-
-        log("Record inserted into " + tableName + ".", true);
-        Comm::recv(&done, 0);
-        Comm::recv(&done, 1);
-    } else {
-        log("Unknown command: " + command, false);
     }
-}
-
-void DBMS::handleConsole() {
-    std::string command;
-
-    std::cout << "Welcome to SMPC-DBMS. Type 'exit' to quit." << std::endl;
-
-    while (true) {
-        if (currentDatabase) {
-            std::cout << "smpc-db(" + currentDatabase->name() + ")> ";
-        } else {
-            std::cout << "smpc-db> ";
-        }
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        std::getline(std::cin, command);
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        if (command == "exit") {
-            Comm::send(&command, 0);
-            Comm::send(&command, 1);
-            break;
-        }
-        executeSQL(command);
-    }
-
-    std::cout << "Goodbye!" << std::endl;
-}
-
-int DBMS::parseDataType(const std::string &typeName) {
-    if (typeName == "bool") {
-        return 1;
-    }
-    if (typeName == "int8") {
-        return 8;
-    }
-    if (typeName == "int16") {
-        return 16;
-    }
-    if (typeName == "int32") {
-        return 32;
-    }
-    if (typeName == "int64") {
-        return 64;
-    }
-    throw std::invalid_argument("Unknown data type");
+    resp << std::endl;
+    over: LocalServer::getInstance().send_(resp.str());
 }
 
 void DBMS::log(const std::string &msg, bool success) {
-    Log::i((success ? "Done. " : "Failed. ") + msg);
+    LocalServer::getInstance().send_((success ? "OK. " : "Failed. ") + msg + "\n");
 }
 
 void DBMS::handleRequests() {
-    int done;
     while (true) {
-        std::string command;
-        Comm::recv(&command, Comm::CLIENT_RANK);
-        std::string msg;
+        std::string jstr;
+        Comm::recv(&jstr, Comm::CLIENT_RANK);
+        auto j = json::parse(jstr);
+        std::string type = j.at("type").get<std::string>();
 
-        if (command == "exit") {
+        if (type == "exit") {
+            Comm::send(&done, Comm::CLIENT_RANK);
             break;
-        } else if (command.starts_with(CDB_PRE)) { // create database
-            std::string dbName = command.substr(CDB_PRE.length());
-            if (!createDatabase(dbName, msg)) {
-                handleFailedExecution();
-            }
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(DDB_PRE)) {
-            std::string dbName = command.substr(DDB_PRE.length());
-            if (!deleteDatabase(dbName, msg)) {
-                handleFailedExecution();
-            }
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(USE_PRE)) {
-            std::string dbName = command.substr(USE_PRE.length());
-            if (!useDatabase(dbName, msg)) {
-                handleFailedExecution();
-            }
-            log("Switched to database " + dbName + ".", true);
-
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(CTB_PRE)) {
-            std::istringstream iss(command.substr(CTB_PRE.length()));
-            doCreateTable(iss);
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(DTB_PRE)) {
-            std::string tableName = command.substr(DTB_PRE.length());
-            if (!currentDatabase->deleteTable(tableName, msg)) {
-                log(msg, false);
-                handleFailedExecution();
-            }
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(INS_PRE)) {
-            std::string tableName = command.substr(INS_PRE.length());
-            Table *table = currentDatabase->getTable(tableName);
-            if (!table) {
-                log("Table does not exist.", false);
-                handleFailedExecution();
-            }
+        } else if (type == "cdb") { // create database
+            std::string dbName = j.at("name").get<std::string>();
+            createDatabase(dbName, msg);
+        } else if (type == "ddb") {
+            std::string dbName = j.at("name").get<std::string>();
+            dropDatabase(dbName, msg);
+        } else if (type == "udb") {
+            std::string dbName = j.at("name").get<std::string>();
+            useDatabase(dbName, msg);
+        } else if (type == "ctb") {
+            std::string tbName = j.at("name").get<std::string>();
+            std::vector<std::string> fieldNames = j.at("fieldNames").get<std::vector<std::string>>();
+            std::vector<int32_t> fieldTypes = j.at("fieldTypes").get<std::vector<int32_t>>();
+            _currentDatabase->createTable(tbName, fieldNames, fieldTypes, msg);
+        } else if (type == "dtb") {
+            std::string tbName = j.at("name").get<std::string>();
+            _currentDatabase->dropTable(tbName, msg);
+        } else if (type == "ins") {
+            std::string tbName = j.at("name").get<std::string>();
+            Table *table = _currentDatabase->getTable(tbName);
 
             std::vector<int> types = table->fieldTypes();
             Record r(table);
-            for (int i = 0; i < types.size(); i++) {
-                int type = types[i];
-                if (type == 1) {
+            for (int t : types) {
+                if (t == 1) {
                     BitSecret s = BitSecret(false).share();
-                    r.addField(s, type);
-                } else if (type == 8) {
+                    r.addField(s, t);
+                } else if (t == 8) {
                     IntSecret s = IntSecret<int8_t>(0).share();
-                    r.addField(s, type);
-                } else if (type == 16) {
+                    r.addField(s, t);
+                } else if (t == 16) {
                     IntSecret s = IntSecret<int16_t>(0).share();
-                    r.addField(s, type);
-                } else if (type == 32) {
+                    r.addField(s, t);
+                } else if (t == 32) {
                     IntSecret s = IntSecret<int32_t>(0).share();
-                    r.addField(s, type);
+                    r.addField(s, t);
                 } else {
                     IntSecret s = IntSecret<int64_t>(0).share();
-                    r.addField(s, type);
+                    r.addField(s, t);
                 }
             }
-            if (table->insert(r)) {
-                log("Record inserted into " + tableName + ".", true);
-            } else {
-                log("Failed to insert record into " + tableName + ".", false);
-                handleFailedExecution();
-            }
-            Comm::send(&done, Comm::CLIENT_RANK);
-        } else if (command.starts_with(SEL_PRE)) {
-            std::string tableName = command.substr(INS_PRE.length());
+            table->insert(r);
+        } else if (type == "sel") {
+            std::string tableName = j.at("name").get<std::string>();
+            std::vector<std::string> selectedFields = j.at("fieldNames").get<std::vector<std::string>>();
 
-            Table *table = currentDatabase->getTable(tableName);
+            Table *table = _currentDatabase->getTable(tableName);
             std::vector<Record> records = table->allRecords();
             auto count = (int64_t) (records.size());
             if (Comm::rank() == 0) {
                 Comm::send(&count, Comm::CLIENT_RANK);
             }
 
+            const auto fieldNames = table->fieldNames();
             for (int i = 0; i < count; i++) {
                 const Record &cur = records[i];
 
-                for (int j = 0; j < table->fieldTypes().size(); j++) {
-                    int type = table->fieldTypes()[j];
+                for (const auto & selectedField : selectedFields) {
+                    // column idx in the table
+                    int64_t idx = std::distance(fieldNames.begin(),
+                                                std::find(fieldNames.begin(), fieldNames.end(), selectedField));
+                    int type = table->fieldTypes()[idx];
                     if (type == 1) {
-                        std::get<BitSecret>(cur.fieldValues()[j]).reconstruct();
+                        std::get<BitSecret>(cur.fieldValues()[idx]).reconstruct();
                     } else if (type == 8) {
-                        std::get<IntSecret<int8_t>>(cur.fieldValues()[j]).reconstruct();
+                        std::get<IntSecret<int8_t>>(cur.fieldValues()[idx]).reconstruct();
                     } else if (type == 16) {
-                        std::get<IntSecret<int16_t>>(cur.fieldValues()[j]).reconstruct();
+                        std::get<IntSecret<int16_t>>(cur.fieldValues()[idx]).reconstruct();
                     } else if (type == 32) {
-                        std::get<IntSecret<int32_t>>(cur.fieldValues()[j]).reconstruct();
+                        std::get<IntSecret<int32_t>>(cur.fieldValues()[idx]).reconstruct();
                     } else {
-                        std::get<IntSecret<int64_t>>(cur.fieldValues()[j]).reconstruct();
+                        std::get<IntSecret<int64_t>>(cur.fieldValues()[idx]).reconstruct();
                     }
                 }
             }
-            Comm::send(&done, Comm::CLIENT_RANK);
         }
-    }
-}
-
-void DBMS::handleFileCommands() {
-    std::string command;
-
-    std::cout << "Welcome to SMPC-DBMS. Type 'exit' to quit." << std::endl;
-
-    std::fstream file("commands.txt");
-
-    if (!file.is_open()) {
-        throw std::runtime_error("Cannot open commands.txt.");
-    }
-
-    while (std::getline(file, command)) {
-        if (currentDatabase) {
-            std::cout << "smpc-db(" + currentDatabase->name() + ")> ";
-        } else {
-            std::cout << "smpc-db> ";
-        }
-        std::cout << command << std::endl;
-        if (command == "exit") {
-            Comm::send(&command, 0);
-            Comm::send(&command, 1);
-            break;
-        }
-        executeSQL(command);
-    }
-
-    std::cout << "Goodbye!" << std::endl;
-}
-
-void DBMS::doCreateTable(std::istringstream &iss) {
-    std::string tableName;
-    iss >> tableName;
-
-    if (currentDatabase->getTable(tableName)) {
-        log("Table already exists.", false);
-        return;
-    }
-
-    std::string fieldsStr;
-    std::getline(iss, fieldsStr, ')');
-    fieldsStr.erase(0, fieldsStr.find('(') + 1);
-    std::istringstream fieldsStream(fieldsStr);
-
-    std::vector<std::string> fieldNames;
-    std::vector<int> fieldTypes;
-    std::string fieldDef;
-    while (std::getline(fieldsStream, fieldDef, ',')) {
-        std::istringstream fieldStream(fieldDef);
-        std::string fieldName, typeStr;
-        fieldStream >> fieldName >> typeStr;
-
-        try {
-            int type = parseDataType(typeStr);
-            fieldNames.push_back(fieldName);
-            fieldTypes.push_back(type);
-        } catch (const std::invalid_argument &e) {
-            log("Invalid data type for field " + fieldName, false);
-            return;
-        }
-    }
-
-    std::string msg;
-    bool created = currentDatabase->createTable(tableName, fieldNames, fieldTypes, msg);
-    if (!created) {
-        log(msg, false);
-        handleFailedExecution();
-    } else {
-        log("Table " + tableName + " created.", true);
+        // sync
+        Comm::send(&done, Comm::CLIENT_RANK);
     }
 }
 
 void DBMS::handleFailedExecution() {
-    handleFailedExecution();
+
+}
+
+Database *DBMS::currentDatabase() {
+    return _currentDatabase;
 }

@@ -1,6 +1,6 @@
 create database d1
 use d1
-create table t1 (age int8, height int32)
+create table t1 (age smallint, height int)
 insert into t1 values (10, 180)
 select * from t1
 exit

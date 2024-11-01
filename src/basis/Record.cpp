@@ -11,25 +11,26 @@ Record::Record(Table *owner) {
     this->_owner = owner;
 }
 
-void Record::print() const {
+void Record::print(std::ostringstream& oss) const {
     for (int i = 0; i < _fieldValues.size(); i++) {
-        int type = _owner->_fieldTypes()[i];
+        int type = _types[i];
         if (type == 1) {
-            std::cout << std::setw(10) << (int64_t) std::get<BitSecret>(_fieldValues[i]).get();
+            oss << std::setw(10) << (int64_t) std::get<BitSecret>(_fieldValues[i]).get();
         } else if (type == 8) {
-            std::cout << std::setw(10) << (int64_t) std::get<IntSecret<int8_t>>(_fieldValues[i]).get();
+            oss << std::setw(10) << (int64_t) std::get<IntSecret<int8_t>>(_fieldValues[i]).get();
         } else if (type == 16) {
-            std::cout << std::setw(10) << (int64_t) std::get<IntSecret<int16_t>>(_fieldValues[i]).get();
+            oss << std::setw(10) << (int64_t) std::get<IntSecret<int16_t>>(_fieldValues[i]).get();
         } else if (type == 32) {
-            std::cout << std::setw(10) << (int64_t) std::get<IntSecret<int32_t>>(_fieldValues[i]).get();
+            oss << std::setw(10) << (int64_t) std::get<IntSecret<int32_t>>(_fieldValues[i]).get();
         } else {
-            std::cout << std::setw(10) << (int64_t) std::get<IntSecret<int64_t>>(_fieldValues[i]).get();
+            oss << std::setw(10) << (int64_t) std::get<IntSecret<int64_t>>(_fieldValues[i]).get();
         }
     }
-    std::cout << std::endl;
+    oss << std::endl;
 }
 
 void Record::addField(std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>> secret, int type) {
+    _types.push_back(type);
     if (type == 1) {
         this->_fieldValues.emplace_back(std::get<BitSecret>(secret));
     } else if (type == 8) {

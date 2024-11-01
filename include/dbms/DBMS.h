@@ -9,54 +9,53 @@
 #include <vector>
 #include <map>
 #include "../basis/Database.h"
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 class DBMS {
 public:
-    static const std::string CDB_PRE;
-    static const std::string DDB_PRE;
-    static const std::string USE_PRE;
-    static const std::string CTB_PRE;
-    static const std::string DTB_PRE;
     static const std::string INS_PRE;
     static const std::string SEL_PRE;
 private:
-    std::map<std::string, Database> databases;
-    Database *currentDatabase = nullptr;
+    std::map<std::string, Database> _databases;
+    Database *_currentDatabase = nullptr;
 
+    // temp
+    int done{};
+    std::string msg{};
+
+private:
     // private constructor
     DBMS() = default;
 
+public:
     // forbid clone
     DBMS(const DBMS &) = delete;
 
     DBMS &operator=(const DBMS &) = delete;
 
-public:
     static DBMS &getInstance();
 
-    void handleFileCommands();
+    bool createDatabase(const std::string &dbName, std::string &msg);
 
-    void handleConsole();
+    bool dropDatabase(const std::string &dbName, std::string &msg);
 
-    void handleRequests();
-
-    bool createDatabase(const std::string &dbName, std::string& msg);
-
-    bool deleteDatabase(const std::string &dbName, std::string& msg);
-
-    bool useDatabase(const std::string &dbName, std::string& msg);
-
-    void executeSQL(const std::string &command);
-
-private:
-    void handleFailedExecution();
-
-    void doCreateTable(std::istringstream &iss);
-
-    static int parseDataType(const std::string &typeName);
+    bool useDatabase(const std::string &dbName, std::string &msg);
 
     static void log(const std::string &msg, bool success);
 
+    Database *currentDatabase();
+
+    void handleFailedExecution();
+
+    static int parseDataType(const std::string &typeName);
+
+    void execute(const std::string &command);
+
+    static void notifyServersSync(json& j);
+
+    void handleRequests();
 };
 
 #endif //SMPC_DATABASE_DBMS_H

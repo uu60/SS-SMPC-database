@@ -25,7 +25,7 @@ Database::createTable(const std::string &tableName, std::vector<std::string> fie
     return true;
 }
 
-bool Database::deleteTable(const std::string &tableName, std::string &msg) {
+bool Database::dropTable(const std::string &tableName, std::string &msg) {
     if (!getTable(tableName)) {
         msg = "Table not existed.";
         return false;

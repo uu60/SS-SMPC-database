@@ -1,20 +1,21 @@
-#include <iostream>
 #include <sstream>
-#include "basis/Database.h"
-#include "dbms/DBMS.h"
 #include "mpc_package/utils/Comm.h"
-#include "mpc_package/utils/Log.h"
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
+#include "socket/LocalServer.h"
+#include "dbms/DBMS.h"
 
 int main(int argc, char **argv) {
     Comm::init(argc, argv);
 
-    DBMS &dbms = DBMS::getInstance();
-    if (Comm::isClient()) {
-        dbms.handleFileCommands();
+    if (Comm::rank() == Comm::CLIENT_RANK) {
+        LocalServer &server = LocalServer::getInstance();
+        server.run();
     } else {
-        dbms.handleRequests();
+        DBMS::getInstance().handleRequests();
     }
 
     Comm::finalize();
     return 0;
+
 }
