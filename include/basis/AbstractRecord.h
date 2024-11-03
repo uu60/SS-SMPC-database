@@ -12,26 +12,23 @@
 #include <mpc_package/api/IntSecret.h>
 #include <mpc_package/api/BitSecret.h>
 
-class Table;
-
-class Record {
-private:
-    Table *_owner;
-    std::vector<int32_t> _types;
+class AbstractRecord {
+public:
     std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>> _fieldValues;
 
 public:
-    Record() = default;
-
-    explicit Record(Table *owner);
+    AbstractRecord() = default;
 
     void addField(std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>> secret, int type);
 
     void print(std::ostringstream& oss) const;
 
-    [[nodiscard]] const std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>>& fieldValues() const;
+protected:
+    [[nodiscard]] virtual int getType(int idx) const = 0;
 
-    [[nodiscard]] Table *owner() const;
+    virtual void addType(int type) = 0;
+
+    [[nodiscard]] virtual int getIdx(const std::string& fieldName) const = 0;
 };
 
 

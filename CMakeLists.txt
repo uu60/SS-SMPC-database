@@ -12,14 +12,19 @@ link_directories(/usr/local/lib)
 add_executable(SMPC_database src/main.cpp
         src/basis/Table.cpp
         include/basis/Table.h
-        src/dbms/DBMS.cpp
-        include/dbms/DBMS.h
-        src/basis/Record.cpp
-        include/basis/Record.h
+        src/dbms/SystemManager.cpp
+        include/dbms/SystemManager.h
+        src/basis/AbstractRecord.cpp
+        include/basis/AbstractRecord.h
         src/basis/Database.cpp
         include/basis/Database.h
         src/socket/LocalServer.cpp
-        include/socket/LocalServer.h)
+        include/socket/LocalServer.h
+        src/basis/TableRecord.cpp
+        include/basis/TableRecord.h
+        src/basis/TempRecord.cpp
+        include/basis/TempRecord.h
+)
 
 target_link_libraries(${PROJECT_NAME} mpc_package ${SQLPARSER_LIB})
 target_link_directories(${PROJECT_NAME} PUBLIC ${mpc_package_LIBRARY_DIRS})

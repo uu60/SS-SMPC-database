@@ -6,7 +6,7 @@
 #define SMPC_DATABASE_DATABASE_H
 #include <vector>
 #include <map>
-#include "Table.h"
+#include "./Table.h"
 
 class Database {
 private:

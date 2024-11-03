@@ -8,16 +8,16 @@
 #include <iostream>
 #include <iomanip>
 
+#include "basis/TableRecord.h"
+#include "basis/TempRecord.h"
+
 Table::Table(std::string tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes) {
     this->_tableName = std::move(tableName);
     this->_fieldNames = std::move(fieldNames);
     this->_fieldTypes = std::move(fieldTypes);
 }
 
-bool Table::insert(const Record& r) {
-    std::string command = "insert";
-    Comm::send(&command, 0);
-    Comm::send(&command, 0);
+bool Table::insert(const TableRecord& r) {
     this->_records.push_back(r);
     return true;
 }
@@ -26,12 +26,15 @@ const std::vector<int> &Table::fieldTypes() {
     return _fieldTypes;
 }
 
-const std::vector<Record>& Table::allRecords() const {
-    return this->_records;
+std::vector<TempRecord> Table::selectAll() const {
+    std::vector<TempRecord> ret;
+    for (const auto& r : this->_records) {
+        ret.push_back(r.convertToTemp());
+    }
+    return ret;
 }
 
 const std::vector<std::string> &Table::fieldNames() const {
     return _fieldNames;
 }
-
 

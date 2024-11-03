@@ -9,7 +9,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <nlohmann/json.hpp>
-#include "dbms/DBMS.h"
+#include "dbms/SystemManager.h"
 using json = nlohmann::json;
 
 LocalServer::LocalServer() : server_fd(-1), new_socket(-1) {
@@ -90,12 +90,12 @@ void LocalServer::run() {
             if (strcasecmp(command.c_str(), "exit") == 0) {
                 json j;
                 j["type"] = "exit";
-                DBMS::notifyServersSync(j);
+                SystemManager::notifyServersSync(j);
                 break;
             }
 
             // Process the complete command
-            DBMS::getInstance().execute(command);
+            SystemManager::getInstance().execute(command);
         }
 
         // Close the socket for the current client, allowing the server to accept a new connection

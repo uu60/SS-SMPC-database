@@ -18,7 +18,7 @@ bool
 Database::createTable(const std::string &tableName, std::vector<std::string> fieldNames, std::vector<int> fieldTypes,
                       std::string &msg) {
     if (getTable(tableName)) {
-        msg = "Table existed.";
+        msg = "Table already exists.";
         return false;
     }
     _tables[tableName] = Table(tableName, std::move(fieldNames), std::move(fieldTypes));

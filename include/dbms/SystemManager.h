@@ -10,13 +10,15 @@
 #include <map>
 #include "../basis/Database.h"
 #include <nlohmann/json.hpp>
+#include <sql/SQLStatement.h>
 
 using json = nlohmann::json;
 
-class DBMS {
+class SystemManager {
 public:
     static const std::string INS_PRE;
     static const std::string SEL_PRE;
+
 private:
     std::map<std::string, Database> _databases;
     Database *_currentDatabase = nullptr;
@@ -27,15 +29,15 @@ private:
 
 private:
     // private constructor
-    DBMS() = default;
+    SystemManager() = default;
 
 public:
     // forbid clone
-    DBMS(const DBMS &) = delete;
+    SystemManager(const SystemManager &) = delete;
 
-    DBMS &operator=(const DBMS &) = delete;
+    SystemManager &operator=(const SystemManager &) = delete;
 
-    static DBMS &getInstance();
+    static SystemManager &getInstance();
 
     bool createDatabase(const std::string &dbName, std::string &msg);
 
@@ -45,6 +47,10 @@ public:
 
     static void log(const std::string &msg, bool success);
 
+    void serverSelect(nlohmann::basic_json<> j) const;
+
+    void serverInsert(nlohmann::basic_json<> j);
+
     Database *currentDatabase();
 
     void handleFailedExecution();
@@ -53,9 +59,23 @@ public:
 
     void execute(const std::string &command);
 
-    static void notifyServersSync(json& j);
+    static void notifyServersSync(json &j);
 
     void handleRequests();
+
+private:
+    // for client
+    bool clientCreateTable(std::ostringstream &resp, const hsql::SQLStatement *stmt);
+
+    bool clientDropTable(std::ostringstream &resp, const hsql::SQLStatement *stmt);
+
+    bool clientCreateDeleteDb(std::istringstream &iss, std::ostringstream &resp, std::string &word, bool create);
+
+    void clientUseDb(std::istringstream &iss, std::ostringstream &resp);
+
+    bool clientInsert(std::ostringstream &resp, const hsql::SQLStatement *stmt);
+
+    bool clientSelect(std::ostringstream &resp, const hsql::SQLStatement *stmt);
 };
 
 #endif //SMPC_DATABASE_DBMS_H
