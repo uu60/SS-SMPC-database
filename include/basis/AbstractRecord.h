@@ -16,14 +16,12 @@ class AbstractRecord {
 public:
     std::vector<std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>>> _fieldValues;
 
-public:
     AbstractRecord() = default;
 
     void addField(std::variant<BitSecret, IntSecret<int8_t>, IntSecret<int16_t>, IntSecret<int32_t>, IntSecret<int64_t>> secret, int type);
 
     void print(std::ostringstream& oss) const;
 
-protected:
     [[nodiscard]] virtual int getType(int idx) const = 0;
 
     virtual void addType(int type) = 0;

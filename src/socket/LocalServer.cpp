@@ -95,7 +95,7 @@ void LocalServer::run() {
             }
 
             // Process the complete command
-            SystemManager::getInstance().execute(command);
+            SystemManager::getInstance().clientExecute(command);
         }
 
         // Close the socket for the current client, allowing the server to accept a new connection

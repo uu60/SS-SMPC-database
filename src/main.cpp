@@ -13,11 +13,11 @@ int main(int argc, char **argv) {
         LocalServer &server = LocalServer::getInstance();
         server.run();
     } else {
-        SystemManager::getInstance().handleRequests();
+        SystemManager::getInstance().serverExecute();
     }
 
     Comm::finalize();
     return 0;
     // hsql::SQLParserResult result;
-    // hsql::SQLParser::parse("insert into t values (-6);", &result);
+    // hsql::SQLParser::parse("create table t (a int(8));", &result);
 }

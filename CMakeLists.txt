@@ -7,7 +7,6 @@ set(SQLPARSER_LIB /usr/local/lib/libsqlparser.so)
 find_package(mpc_package REQUIRED)
 
 include_directories(${PROJECT_SOURCE_DIR}/include /usr/local/include/hsql /usr/local/include/tabulate/include /usr/local/include/json/include)
-link_directories(/usr/local/lib)
 
 add_executable(SMPC_database src/main.cpp
         src/basis/Table.cpp
@@ -24,6 +23,16 @@ add_executable(SMPC_database src/main.cpp
         include/basis/TableRecord.h
         src/basis/TempRecord.cpp
         include/basis/TempRecord.h
+        include/operator/Select.h
+        src/operator/Select.cpp
+        include/operator/Insert.h
+        src/operator/Insert.cpp
+        include/operator/Create.h
+        src/operator/Create.cpp
+        include/operator/Drop.h
+        src/operator/Drop.cpp
+        src/function/Order.cpp
+        include/function/Order.h
 )
 
 target_link_libraries(${PROJECT_NAME} mpc_package ${SQLPARSER_LIB})
